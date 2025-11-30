@@ -1,0 +1,50 @@
+# Environment files
+.env
+.env.local
+*.env.local
+
+# Dependencies
+node_modules
+packages/*/node_modules
+
+# Build outputs
+.next
+packages/*/.next
+packages/*/dist
+packages/*/artifacts
+packages/*/cache
+
+# TypeScript
+*.tsbuildinfo
+packages/*/*.tsbuildinfo
+
+# IDE
+.DS_Store
+packages/*/.DS_Store
+.vscode
+.idea
+
+# Testing & Coverage
+packages/*/coverage
+packages/*/.turbo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temp files
+tmp*
+*.tmp
+
+# Lock files (keep only pnpm-lock.yaml)
+package-lock.json
+packages/*/package-lock.json
+yarn.lock
+
+# NPX package folders
+create-fhevm-nextjs/
+create-fhevm-react/
+create-fhevm-vue/
