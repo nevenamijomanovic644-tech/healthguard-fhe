@@ -12,8 +12,8 @@ const CONTRACT_ABI = [
   "function getMySubmissionTime() external view returns (uint256)"
 ];
 
-// Contract address from environment
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '';
+// Contract address - BloodGlucoseCheck on Sepolia
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '0xc8BB69fEdC4AEaC8131c96Cc8538aa8786306816';
 
 // FHEVM Configuration for Sepolia
 const FHEVM_CONFIG = {
@@ -58,7 +58,6 @@ export default function DAppPage() {
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [result, setResult] = useState<number | null>(null);
-  const [countdown, setCountdown] = useState(0);
   const [canDecrypt, setCanDecrypt] = useState(false);
   const [message, setMessage] = useState('');
   
@@ -175,21 +174,10 @@ export default function DAppPage() {
       setMessage('Transaction sent! Waiting for confirmation...');
       await tx.wait();
       
-      // 提交成功，10秒后允许解密
+      // 提交成功，立即允许解密
       setHasSubmitted(true);
-      setMessage('');
-      setCountdown(10);
-      
-      const timer = setInterval(() => {
-        setCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setCanDecrypt(true);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      setMessage('✅ Submission successful! You can now decrypt your result.');
+      setCanDecrypt(true);
       
     } catch (error: any) {
       console.error('Submission failed:', error);
@@ -376,22 +364,6 @@ export default function DAppPage() {
         {message && (
           <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-sm">
             {message}
-          </div>
-        )}
-        
-        {/* Countdown */}
-        {countdown > 0 && (
-          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-            <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-yellow-600 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-              </svg>
-              <div>
-                <p className="text-yellow-800 font-medium">Syncing permissions...</p>
-                <p className="text-yellow-600 text-sm">Please wait {countdown} seconds before decrypting</p>
-              </div>
-            </div>
           </div>
         )}
         
