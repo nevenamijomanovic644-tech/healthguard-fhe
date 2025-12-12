@@ -459,7 +459,7 @@ export default function DAppPage() {
                 
                 {canDecrypt && (
                   <button
-                    onClick={handleDecrypt}
+                    onClick={() => handleDecrypt()}
                     disabled={isDecrypting}
                     className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
