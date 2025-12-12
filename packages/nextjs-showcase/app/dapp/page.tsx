@@ -66,24 +66,37 @@ export default function DAppPage() {
   
   // Connect wallet
   const connectWallet = async () => {
+    console.log('Connect wallet button clicked');
+    setMessage('Connecting wallet...');
+    
     try {
       const provider = getWalletProvider();
+      console.log('Provider found:', !!provider);
+      
       if (!provider) {
-        setMessage('No wallet provider found. Please install MetaMask.');
+        setMessage('❌ No wallet found. Please install MetaMask or use a Web3 browser.');
         return;
       }
       
+      console.log('Requesting accounts...');
       const accounts = await provider.request({ method: 'eth_requestAccounts' });
+      console.log('Accounts received:', accounts);
       
       if (accounts.length > 0) {
         setAddress(accounts[0]);
         setIsConnected(true);
-        setMessage('Wallet connected successfully!');
+        setMessage('✅ Wallet connected successfully!');
         setTimeout(() => setMessage(''), 3000);
+      } else {
+        setMessage('❌ No accounts found. Please unlock your wallet.');
       }
     } catch (error: any) {
       console.error('Wallet connection failed:', error);
-      setMessage('Failed to connect wallet: ' + error.message);
+      if (error.code === 4001) {
+        setMessage('❌ Connection rejected. Please approve the connection in your wallet.');
+      } else {
+        setMessage('❌ Failed to connect: ' + (error.message || 'Unknown error'));
+      }
     }
   };
   
@@ -295,6 +308,13 @@ export default function DAppPage() {
             >
               Connect Wallet
             </button>
+            
+            {/* Message display */}
+            {message && (
+              <div className={`mt-6 p-4 rounded-xl text-sm ${message.includes('❌') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-blue-50 text-blue-700 border border-blue-200'}`}>
+                {message}
+              </div>
+            )}
           </div>
         </div>
       </div>
