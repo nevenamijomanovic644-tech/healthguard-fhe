@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useAccount, useWalletClient } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ethers, BrowserProvider } from 'ethers';
 import Link from 'next/link';
 
@@ -27,25 +29,10 @@ const FHEVM_CONFIG = {
   relayerUrl: 'https://relayer.testnet.zama.org',
 };
 
-// Utility to get wallet provider
-function getWalletProvider(): any {
-  if (typeof window === 'undefined') return null;
-  
-  if ((window as any).ethereum) {
-    return (window as any).ethereum;
-  }
-  
-  if ((window as any).okxwallet?.provider) {
-    return (window as any).okxwallet.provider;
-  }
-  
-  return null;
-}
-
 export default function DAppPage() {
-  // Wallet state
-  const [address, setAddress] = useState<string>('');
-  const [isConnected, setIsConnected] = useState(false);
+  // Wagmi hooks
+  const { isConnected, address } = useAccount();
+  const { data: walletClient } = useWalletClient();
   
   // FHEVM state
   const [fhevmInstance, setFhevmInstance] = useState<any>(null);
@@ -64,45 +51,9 @@ export default function DAppPage() {
   // Prevent double initialization
   const isInitializingRef = useRef(false);
   
-  // Connect wallet
-  const connectWallet = async () => {
-    console.log('Connect wallet button clicked');
-    setMessage('Connecting wallet...');
-    
-    try {
-      const provider = getWalletProvider();
-      console.log('Provider found:', !!provider);
-      
-      if (!provider) {
-        setMessage('❌ No wallet found. Please install MetaMask or use a Web3 browser.');
-        return;
-      }
-      
-      console.log('Requesting accounts...');
-      const accounts = await provider.request({ method: 'eth_requestAccounts' });
-      console.log('Accounts received:', accounts);
-      
-      if (accounts.length > 0) {
-        setAddress(accounts[0]);
-        setIsConnected(true);
-        setMessage('✅ Wallet connected successfully!');
-        setTimeout(() => setMessage(''), 3000);
-      } else {
-        setMessage('❌ No accounts found. Please unlock your wallet.');
-      }
-    } catch (error: any) {
-      console.error('Wallet connection failed:', error);
-      if (error.code === 4001) {
-        setMessage('❌ Connection rejected. Please approve the connection in your wallet.');
-      } else {
-        setMessage('❌ Failed to connect: ' + (error.message || 'Unknown error'));
-      }
-    }
-  };
-  
   // Initialize FHEVM when wallet connects
   useEffect(() => {
-    if (!isConnected || isInitializingRef.current || fhevmInstance) {
+    if (!isConnected || !address || !walletClient || isInitializingRef.current || fhevmInstance) {
       return;
     }
     
@@ -117,28 +68,23 @@ export default function DAppPage() {
           throw new Error('Relayer SDK not loaded. Please refresh the page.');
         }
         
-        // Initialize SDK
+        // Initialize SDK first
         await (window as any).relayerSDK.initSDK();
         
-        // Get provider
-        const provider = getWalletProvider();
-        if (!provider) {
-          throw new Error('No wallet provider found');
-        }
+        // Create provider from walletClient
+        const provider = new BrowserProvider(walletClient as any);
         
         // Create FHEVM instance
         const instance = await (window as any).relayerSDK.createInstance({
           ...FHEVM_CONFIG,
-          network: provider,
+          network: walletClient,
         });
         
         setFhevmInstance(instance);
         console.log('✅ FHEVM initialized successfully');
-        setMessage('FHEVM initialized successfully!');
-        setTimeout(() => setMessage(''), 3000);
-      } catch (e: any) {
-        setInitError(e.message);
-        console.error('❌ FHEVM init failed:', e);
+      } catch (error: any) {
+        console.error('FHEVM init failed:', error);
+        setInitError(error.message || 'Failed to initialize FHEVM');
         isInitializingRef.current = false;
       } finally {
         setIsInitializing(false);
@@ -146,20 +92,15 @@ export default function DAppPage() {
     };
     
     initFhevm();
-  }, [isConnected, fhevmInstance]);
-  
-  // 移除复杂的持久化检查，简化逻辑：刷新后重置状态
+  }, [isConnected, address, walletClient, fhevmInstance]);
   
   // Submit glucose value
   const handleSubmit = async () => {
-    if (!glucoseValue || !fhevmInstance || !address) {
-      setMessage('Please enter a valid glucose value');
-      return;
-    }
+    if (!fhevmInstance || !address || !walletClient) return;
     
     const value = parseFloat(glucoseValue);
-    if (isNaN(value) || value < 0 || value > 500) {
-      setMessage('Please enter a glucose value between 0 and 500 mg/dL');
+    if (isNaN(value) || value <= 0) {
+      setMessage('❌ Please enter a valid glucose value');
       return;
     }
     
@@ -167,24 +108,25 @@ export default function DAppPage() {
     setMessage('Encrypting your data...');
     
     try {
-      // Step 1: Encrypt the input
+      // Create encrypted input
       const input = fhevmInstance.createEncryptedInput(CONTRACT_ADDRESS, address);
       input.add32(Math.round(value));
       const encryptedInput = await input.encrypt();
       
       setMessage('Submitting to blockchain...');
       
-      // Step 2: Submit to contract
-      const provider = new BrowserProvider(getWalletProvider());
+      // Create provider and contract
+      const provider = new BrowserProvider(walletClient as any);
       const signer = await provider.getSigner();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       
+      // Submit transaction
       const tx = await contract.submitGlucoseValue(
         encryptedInput.handles[0],
         encryptedInput.inputProof
       );
       
-      setMessage('Transaction sent! Waiting for confirmation...');
+      setMessage('Waiting for confirmation...');
       await tx.wait();
       
       // 提交成功，立即允许解密
@@ -202,14 +144,14 @@ export default function DAppPage() {
   
   // Decrypt result
   const handleDecrypt = async () => {
-    if (!fhevmInstance || !address) return;
+    if (!fhevmInstance || !address || !walletClient) return;
     
     setIsDecrypting(true);
     setMessage('Requesting signature...');
     
     try {
       // Get encrypted result from contract
-      const provider = new BrowserProvider(getWalletProvider());
+      const provider = new BrowserProvider(walletClient as any);
       const signer = await provider.getSigner();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       
@@ -236,10 +178,11 @@ export default function DAppPage() {
         durationDays
       );
       
-      // Remove EIP712Domain for signature
+      // Remove EIP712Domain from types (required for ethers)
       const typesWithoutDomain = { ...eip712.types };
       delete typesWithoutDomain.EIP712Domain;
       
+      // Sign with wallet
       const signature = await signer.signTypedData(
         eip712.domain,
         typesWithoutDomain,
@@ -259,6 +202,7 @@ export default function DAppPage() {
       );
       
       const decryptedValue = decryptedResults[encryptedHandle];
+      console.log('✅ Decrypted result:', decryptedValue);
       setResult(decryptedValue);
       setMessage('');
       
@@ -270,7 +214,7 @@ export default function DAppPage() {
     }
   };
   
-  // Show appropriate UI based on state
+  // Show connect wallet screen
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
@@ -302,53 +246,43 @@ export default function DAppPage() {
             <p className="text-gray-600 mb-8">
               Please connect your Ethereum wallet to submit your health disclosure
             </p>
-            <button 
-              onClick={connectWallet}
-              className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105"
-            >
-              Connect Wallet
-            </button>
-            
-            {/* Message display */}
-            {message && (
-              <div className={`mt-6 p-4 rounded-xl text-sm ${message.includes('❌') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-blue-50 text-blue-700 border border-blue-200'}`}>
-                {message}
-              </div>
-            )}
+            <ConnectButton />
           </div>
         </div>
       </div>
     );
   }
   
+  // Show initializing screen
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-600 font-medium">Initializing FHEVM...</p>
-          <p className="text-sm text-gray-500 mt-2">Please wait while we set up encryption</p>
+          <p className="text-gray-400 text-sm mt-2">This may take a moment</p>
         </div>
       </div>
     );
   }
   
+  // Show error screen
   if (initError) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center max-w-md mx-auto px-6">
-          <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Initialization Failed</h3>
-          <p className="text-red-600 text-sm mb-4">{initError}</p>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Initialization Error</h2>
+          <p className="text-red-600 mb-4">{initError}</p>
           <button 
             onClick={() => window.location.reload()}
-            className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700"
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            Reload Page
+            Retry
           </button>
         </div>
       </div>
@@ -372,17 +306,15 @@ export default function DAppPage() {
               <p className="text-xs text-gray-500">Blood Glucose Check</p>
             </div>
           </Link>
-          <div className="text-right">
-            <p className="text-xs text-gray-500">Connected</p>
-            <p className="text-sm font-mono text-gray-700">{address.slice(0, 6)}...{address.slice(-4)}</p>
-          </div>
+          <ConnectButton />
         </div>
       </header>
       
-      <main className="max-w-4xl mx-auto px-6 py-12">
-        {/* Messages */}
+      {/* Main Content */}
+      <main className="max-w-2xl mx-auto px-6 py-12">
+        {/* Message Display */}
         {message && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-sm">
+          <div className={`mb-6 p-4 rounded-xl ${message.includes('❌') ? 'bg-red-50 border border-red-200 text-red-700' : message.includes('✅') ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-blue-50 border border-blue-200 text-blue-700'}`}>
             {message}
           </div>
         )}
@@ -394,151 +326,128 @@ export default function DAppPage() {
               <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${result === 1 ? 'bg-green-100' : 'bg-red-100'}`}>
                 {result === 1 ? (
                   <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
                   </svg>
                 ) : (
                   <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
                   </svg>
                 )}
               </div>
               <div>
-                <h3 className={`text-2xl font-bold mb-1 ${result === 1 ? 'text-green-900' : 'text-red-900'}`}>
-                  {result === 1 ? 'Eligible for Insurance' : 'Additional Review Required'}
+                <h3 className={`text-xl font-bold ${result === 1 ? 'text-green-800' : 'text-red-800'}`}>
+                  {result === 1 ? '✅ Eligible' : '❌ Not Eligible'}
                 </h3>
-                <p className={`text-sm ${result === 1 ? 'text-green-700' : 'text-red-700'}`}>
+                <p className={`${result === 1 ? 'text-green-600' : 'text-red-600'}`}>
                   {result === 1 
-                    ? 'Your fasting blood glucose is within the acceptable range (≤110 mg/dL)' 
-                    : 'Your blood glucose may require medical consultation before insurance approval'}
+                    ? 'Your fasting glucose is within the healthy range (≤110 mg/dL)'
+                    : 'Your fasting glucose exceeds the threshold (>110 mg/dL)'}
                 </p>
               </div>
             </div>
+            
+            <button
+              onClick={() => {
+                setHasSubmitted(false);
+                setResult(null);
+                setGlucoseValue('');
+                setCanDecrypt(false);
+              }}
+              className="w-full mt-6 px-6 py-3 bg-gray-600 text-white rounded-xl font-semibold hover:bg-gray-700 transition-all duration-300"
+            >
+              Submit New Disclosure
+            </button>
           </div>
         )}
         
-        {/* Main Card */}
-        <div className="bg-white rounded-3xl shadow-xl p-8 border border-gray-200">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Fasting Blood Glucose Disclosure</h2>
-          <p className="text-gray-600 mb-8">
-            Submit your fasting blood glucose level for insurance eligibility assessment
-          </p>
-          
-          <div>
-            {/* 输入框 */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Blood Glucose Level (mg/dL)
-              </label>
-              <div className="relative">
-                <input 
+        {/* Main Form */}
+        {result === null && (
+          <div className="bg-white rounded-3xl shadow-xl p-8 border border-gray-200">
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">Fasting Blood Glucose Disclosure</h2>
+            <p className="text-gray-600 mb-8">
+              Submit your fasting blood glucose level for insurance eligibility assessment
+            </p>
+            
+            {!hasSubmitted ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Fasting Blood Glucose (mg/dL)
+                </label>
+                <input
                   type="number"
                   value={glucoseValue}
                   onChange={(e) => setGlucoseValue(e.target.value)}
-                  placeholder="Enter value (e.g., 95)"
-                  disabled={isSubmitting || hasSubmitted}
-                  className="w-full px-4 py-4 border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:ring-4 focus:ring-blue-100 outline-none transition-all text-lg disabled:bg-gray-100"
+                  placeholder="Enter your glucose level (e.g., 95)"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 mb-6"
                 />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">
-                  mg/dL
-                </span>
+                
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || !glucoseValue}
+                  className="w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                >
+                  {isSubmitting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                      </svg>
+                      Submitting...
+                    </span>
+                  ) : (
+                    '🔒 Submit Encrypted Data'
+                  )}
+                </button>
               </div>
-              <p className="text-sm text-gray-500 mt-2">
-                Normal range: 70-110 mg/dL • Insurance threshold: ≤110 mg/dL
-              </p>
-            </div>
-            
-            {/* 提交按钮 */}
-            {!hasSubmitted && (
-              <button
-                onClick={handleSubmit}
-                disabled={isSubmitting || !glucoseValue}
-                className="w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-              >
-                {isSubmitting ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+            ) : (
+              <div>
+                <div className="text-center py-8 mb-6">
+                  <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
-                    Submitting...
-                  </span>
-                ) : (
-                  '🔒 Submit Encrypted Data'
+                  </div>
+                  <p className="text-gray-600">Data submitted successfully. Ready to decrypt...</p>
+                </div>
+                
+                {canDecrypt && (
+                  <button
+                    onClick={handleDecrypt}
+                    disabled={isDecrypting}
+                    className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isDecrypting ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                        </svg>
+                        Decrypting... (30-60s)
+                      </span>
+                    ) : (
+                      '🔓 Decrypt Result'
+                    )}
+                  </button>
                 )}
-              </button>
-            )}
-            
-            {/* 解密按钮 */}
-            {hasSubmitted && canDecrypt && result === null && (
-              <button
-                onClick={handleDecrypt}
-                disabled={isDecrypting}
-                className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isDecrypting ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                    </svg>
-                    Decrypting... (30-60s)
-                  </span>
-                ) : (
-                  '🔓 Decrypt Result'
-                )}
-              </button>
-            )}
-            
-            {/* 重新提交按钮 */}
-            {result !== null && (
-              <button
-                onClick={() => {
-                  setHasSubmitted(false);
-                  setResult(null);
-                  setGlucoseValue('');
-                  setCanDecrypt(false);
-                }}
-                className="w-full px-6 py-4 bg-gray-600 text-white rounded-xl font-semibold hover:bg-gray-700 transition-all duration-300"
-              >
-                Submit New Disclosure
-              </button>
+              </div>
             )}
           </div>
-        </div>
+        )}
         
-        {/* Info Section */}
-        <div className="mt-8 grid md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-              </svg>
-              Privacy Guarantee
-            </h3>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Your blood glucose value is encrypted on your device before submission. 
-              The smart contract performs assessment on encrypted data without ever seeing your actual value.
-            </p>
-          </div>
-          
-          <div className="bg-white rounded-2xl p-6 border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-              </svg>
-              Medical Standard
-            </h3>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Assessment based on WHO and ADA guidelines. Fasting glucose ≤110 mg/dL (6.1 mmol/L) 
-              is considered acceptable for standard insurance underwriting.
-            </p>
-          </div>
+        {/* Info Box */}
+        <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100">
+          <h3 className="font-semibold text-blue-900 mb-2">🔐 How it works</h3>
+          <ul className="text-sm text-blue-800 space-y-1">
+            <li>• Your glucose value is encrypted before leaving your browser</li>
+            <li>• The smart contract processes encrypted data using FHE</li>
+            <li>• Only you can decrypt the eligibility result</li>
+            <li>• Insurance companies never see your actual glucose level</li>
+          </ul>
         </div>
       </main>
     </div>
   );
 }
 
-// Force dynamic rendering
+// Disable static generation
 export const dynamic = 'force-dynamic';
-
