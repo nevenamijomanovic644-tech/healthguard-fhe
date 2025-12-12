@@ -47,6 +47,7 @@ export default function DAppPage() {
   const [result, setResult] = useState<number | null>(null);
   const [canDecrypt, setCanDecrypt] = useState(false);
   const [message, setMessage] = useState('');
+  const [countdown, setCountdown] = useState(0);
   
   // Prevent double initialization
   const isInitializingRef = useRef(false);
@@ -129,10 +130,23 @@ export default function DAppPage() {
       setMessage('Waiting for confirmation...');
       await tx.wait();
       
-      // 提交成功，立即允许解密
+      // 提交成功，等待10秒让权限同步
       setHasSubmitted(true);
-      setMessage('✅ Submission successful! You can now decrypt your result.');
-      setCanDecrypt(true);
+      setMessage('✅ Submission successful! Syncing permissions...');
+      setCountdown(10);
+      
+      // 倒计时10秒
+      const timer = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setCanDecrypt(true);
+            setMessage('✅ Ready to decrypt!');
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       
     } catch (error: any) {
       console.error('Submission failed:', error);
@@ -142,12 +156,11 @@ export default function DAppPage() {
     }
   };
   
-  // Decrypt result
-  const handleDecrypt = async () => {
+  // Decrypt result with retry mechanism
+  const handleDecrypt = async (retryCount = 0) => {
     if (!fhevmInstance || !address || !walletClient) return;
     
     setIsDecrypting(true);
-    setMessage('Requesting signature...');
     
     try {
       // Get encrypted result from contract
@@ -156,8 +169,11 @@ export default function DAppPage() {
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       
       const encryptedHandle = await contract.getMyResult();
+      console.log('📋 Encrypted handle:', encryptedHandle);
       
-      setMessage('Decrypting result... This may take 30-60 seconds.');
+      if (retryCount === 0) {
+        setMessage('Requesting signature...');
+      }
       
       // Generate keypair for decryption
       const keypair = fhevmInstance.generateKeypair();
@@ -189,6 +205,8 @@ export default function DAppPage() {
         eip712.message
       );
       
+      setMessage('Decrypting... This may take 30-60 seconds.');
+      
       // Call userDecrypt
       const decryptedResults = await fhevmInstance.userDecrypt(
         handleContractPairs,
@@ -208,9 +226,22 @@ export default function DAppPage() {
       
     } catch (error: any) {
       console.error('Decryption failed:', error);
+      
+      // 如果是500错误，自动重试最多3次
+      if (error.message?.includes('500') && retryCount < 3) {
+        const waitTime = (retryCount + 1) * 10;
+        setMessage(`⏳ Permission sync in progress... Retry ${retryCount + 1}/3 in ${waitTime}s`);
+        console.log(`⚠️ Retry ${retryCount + 1}/3 after ${waitTime}s...`);
+        
+        await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+        return handleDecrypt(retryCount + 1);
+      }
+      
       setMessage('❌ Decryption failed: ' + error.message);
     } finally {
-      setIsDecrypting(false);
+      if (retryCount === 0 || result !== null) {
+        setIsDecrypting(false);
+      }
     }
   };
   
@@ -316,6 +347,22 @@ export default function DAppPage() {
         {message && (
           <div className={`mb-6 p-4 rounded-xl ${message.includes('❌') ? 'bg-red-50 border border-red-200 text-red-700' : message.includes('✅') ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-blue-50 border border-blue-200 text-blue-700'}`}>
             {message}
+          </div>
+        )}
+        
+        {/* Countdown Display */}
+        {countdown > 0 && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-yellow-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+              </svg>
+              <div>
+                <p className="text-yellow-800 font-medium">Syncing permissions with relayer...</p>
+                <p className="text-yellow-600 text-sm">Please wait {countdown} seconds before decrypting</p>
+              </div>
+            </div>
           </div>
         )}
         
