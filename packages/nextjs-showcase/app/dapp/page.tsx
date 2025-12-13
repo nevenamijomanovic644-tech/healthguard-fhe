@@ -225,9 +225,17 @@ export default function DAppPage() {
       const decryptedValue = decryptedResults[encryptedHandle];
       console.log('✅ Decrypted result:', decryptedValue);
       console.log('   Type:', typeof decryptedValue);
-      console.log('   Value === 1:', decryptedValue === 1);
-      console.log('   Value === 0:', decryptedValue === 0);
-      setResult(Number(decryptedValue));
+      
+      // Convert bigint to number
+      const resultValue = typeof decryptedValue === 'bigint' 
+        ? Number(decryptedValue) 
+        : decryptedValue;
+      
+      console.log('   Converted to number:', resultValue);
+      console.log('   Value === 1:', resultValue === 1);
+      console.log('   Value === 0:', resultValue === 0);
+      
+      setResult(resultValue);
       setMessage('');
       
     } catch (error: any) {
