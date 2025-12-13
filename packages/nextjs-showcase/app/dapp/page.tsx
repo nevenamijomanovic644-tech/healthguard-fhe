@@ -15,7 +15,7 @@ const CONTRACT_ABI = [
 ];
 
 // Contract address - BloodGlucoseCheck on Sepolia
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '0xc8BB69fEdC4AEaC8131c96Cc8538aa8786306816';
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '0x74616dA40C205795eb1872bCF2166b7Cc3CcafdD';
 
 // FHEVM Configuration for Sepolia
 const FHEVM_CONFIG = {
@@ -111,7 +111,10 @@ export default function DAppPage() {
     try {
       // Create encrypted input
       const input = fhevmInstance.createEncryptedInput(CONTRACT_ADDRESS, address);
-      input.add32(Math.round(value));
+      const roundedValue = Math.round(value);
+      console.log('📝 Submitting glucose value:', roundedValue);
+      console.log('   Expected result:', roundedValue <= 110 ? '1 (eligible)' : '0 (not eligible)');
+      input.add32(roundedValue);
       const encryptedInput = await input.encrypt();
       
       setMessage('Submitting to blockchain...');
@@ -221,7 +224,10 @@ export default function DAppPage() {
       
       const decryptedValue = decryptedResults[encryptedHandle];
       console.log('✅ Decrypted result:', decryptedValue);
-      setResult(decryptedValue);
+      console.log('   Type:', typeof decryptedValue);
+      console.log('   Value === 1:', decryptedValue === 1);
+      console.log('   Value === 0:', decryptedValue === 0);
+      setResult(Number(decryptedValue));
       setMessage('');
       
     } catch (error: any) {
